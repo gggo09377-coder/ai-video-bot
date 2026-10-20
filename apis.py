@@ -1,16 +1,17 @@
 import os
 import time
-import hashlib
 import asyncio
 import httpx
 import logging
-from gradio_client import Client, file
+from magic_hour import Client as MagicHourClient
+import fal_client
 
 log = logging.getLogger(__name__)
 
-HF_API_KEY = os.getenv("HF_API_KEY", "").strip()
+MAGIC_HOUR_API_KEY = os.getenv("MAGIC_HOUR_API_KEY", "").strip()
+FAL_API_KEY = os.getenv("FAL_API_KEY", "").strip()
+AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
 
-# ═══════ 1. تحسين البرومبت ═══════
 async def enhance_prompt(prompt: str) -> str:
     url = f"https://text.pollinations.ai/{prompt}?system=Act as a professional cinematic video prompt engineer. Enhance this prompt with lighting, camera angles, 4k, 8k, highly detailed, masterpiece. Output only the enhanced prompt in English."
     try:
@@ -22,7 +23,6 @@ async def enhance_prompt(prompt: str) -> str:
         pass
     return f"{prompt}, cinematic, 4K, ultra detailed, professional lighting"
 
-# ═══════ 2. رفع الصور ═══════
 async def upload_image(image_bytes: bytes, filename: str = "img.jpg") -> str:
     try:
         async with httpx.AsyncClient(timeout=60) as c:
@@ -35,67 +35,87 @@ async def upload_image(image_bytes: bytes, filename: str = "img.jpg") -> str:
         log.error(f"[catbox] upload failed: {e}")
     return None
 
-# ═══════ 3. توليد الفيديو (عبر مساحة Hugging Face مباشرة) ═══════
-def generate_video_hf_space(prompt: str, image_url: str = None) -> str:
-    """يستخدم مساحة LTX-Video على Hugging Face لتوليد الفيديو."""
+# ═══════ المحرك 1: Magic Hour ═══════
+def _magic_hour_sync(prompt, image_url):
+    if not MAGIC_HOUR_API_KEY: return None
     try:
-        # الاتصال بالمساحة المجانية
-        client = Client("Lightricks/LTX-Video", hf_token=HF_API_KEY)
-        
-        # تحميل الصورة كملف إذا وجدت
-        img_path = None
+        client = MagicHourClient(token=MAGIC_HOUR_API_KEY)
         if image_url:
-            import urllib.request
-            img_path = "temp_input.jpg"
-            urllib.request.urlretrieve(image_url, img_path)
-            img_path = file(img_path)
-        
-        # طلب التوليد
-        result = client.predict(
-            prompt=prompt,
-            negative_prompt="watermark, text, logo, blurry, low quality",
-            image=img_path,
-            api_name="/generate"
-        )
-        
-        # النتيجة عادة تكون مسار ملف، نحوله لرابط
-        if result and isinstance(result, str):
-            # إذا كان مسار محلي، نرفعه على كات بوكس
-            if os.path.exists(result):
-                with open(result, "rb") as f:
-                    video_bytes = f.read()
-                
-                # رفع الفيديو
-                import requests
-                r = requests.post(
-                    "https://catbox.moe/user/api.php",
-                    data={"reqtype": "fileupload", "userhash": ""},
-                    files={"fileToUpload": ("video.mp4", video_bytes, "video/mp4")},
-                    timeout=120
-                )
-                if r.status_code == 200:
-                    return r.text.strip()
+            res = client.v1.image_to_video.create(
+                image_url=image_url, prompt=prompt, duration_seconds=10, model="wan-2.2"
+            )
+        else:
+            res = client.v1.text_to_video.create(
+                prompt=prompt, duration_seconds=10, model="wan-2.2"
+            )
+        # Magic Hour يعيد كائن يحتوي على رابط الفيديو
+        return res.video_url if hasattr(res, 'video_url') else res.get("video_url")
     except Exception as e:
-        log.error(f"[HF Space] failed: {e}")
+        log.error(f"[Magic Hour] failed: {e}")
     return None
 
-# ═══════ 4. السلسلة (فقط Hugging Face Space) ═══════
+# ═══════ المحرك 2: fal.ai (Kling) ═══════
+def _fal_sync(prompt, image_url):
+    if not FAL_API_KEY: return None
+    try:
+        os.environ["FAL_KEY"] = FAL_API_KEY
+        if image_url:
+            result = fal_client.subscribe(
+                "fal-ai/kling-video/v2.1/standard/image-to-video",
+                arguments={"prompt": prompt, "image_url": image_url, "duration": "10"}
+            )
+        else:
+            result = fal_client.subscribe(
+                "fal-ai/kling-video/v3/pro/text-to-video",
+                arguments={"prompt": prompt, "duration": "10"}
+            )
+        return result.get("video", {}).get("url")
+    except Exception as e:
+        log.error(f"[fal.ai] failed: {e}")
+    return None
+
+# ═══════ المحرك 3: Agnes AI ═══════
+async def _agnes_async(prompt, image_url):
+    if not AGNES_API_KEY: return None
+    try:
+        headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
+        payload = {"model": "agnes-video-v2.0", "prompt": prompt, "duration": 10}
+        if image_url: payload["image_url"] = image_url
+        
+        async with httpx.AsyncClient(timeout=180) as c:
+            r = await c.post("https://apihub.agnes-ai.com/v1/videos", headers=headers, json=payload)
+            if r.status_code == 200:
+                data = r.json()
+                return data.get("data", {}).get("video_url") or data.get("url")
+    except Exception as e:
+        log.error(f"[Agnes] failed: {e}")
+    return None
+
+# ═══════ السلسلة النهائية ═══════
 async def generate_video_with_fallback(original_prompt: str, image_url: str = None):
     prompt = await enhance_prompt(original_prompt)
-    
-    log.info("Trying Hugging Face Space (LTX-Video)...")
-    # نستخدم دالة متزامنة (sync) ونحولها لـ async
     loop = asyncio.get_event_loop()
-    video_url = await loop.run_in_executor(None, generate_video_hf_space, prompt, image_url)
-    
-    if video_url:
-        return video_url, "Hugging Face (LTX-Video)", None
-        
-    return None, None, "All providers failed"
+
+    # 1. Magic Hour
+    log.info("Trying Magic Hour (10s)...")
+    url = await loop.run_in_executor(None, _magic_hour_sync, prompt, image_url)
+    if url: return url, "Magic Hour", None
+
+    # 2. fal.ai
+    log.info("Trying fal.ai (Kling 10s)...")
+    url = await loop.run_in_executor(None, _fal_sync, prompt, image_url)
+    if url: return url, "fal.ai", None
+
+    # 3. Agnes AI
+    log.info("Trying Agnes AI (10s)...")
+    url = await _agnes_async(prompt, image_url)
+    if url: return url, "Agnes AI", None
+
+    return None, None, "فشلت جميع المحركات. تأكد من مفاتيح API."
 
 async def health_check() -> dict:
-    return {"Hugging Face Space": bool(HF_API_KEY)}
-
-def prompt_hash(prompt: str, image_url: str = None) -> str:
-    key = f"{prompt}|{image_url or ''}"
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+    return {
+        "Magic Hour": bool(MAGIC_HOUR_API_KEY),
+        "fal.ai": bool(FAL_API_KEY),
+        "Agnes AI": bool(AGNES_API_KEY),
+    }
