@@ -1,8 +1,8 @@
 name: Run AI Video Bot
 on:
   schedule:
-    - cron: '0 */6 * * *' # يشتغل تلقائياً كل 6 ساعات
-  workflow_dispatch: # عشان تقدر تشغله يدوياً
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,8 +22,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
-          MAGIC_HOUR_API_KEY: ${{ secrets.MAGIC_HOUR_API_KEY }}
+          HF_API_KEY: ${{ secrets.HF_API_KEY }}
           FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
         run: |
-          # نشغل البوت ونسكره تلقائياً قبل ما تنتهي المهلة (5 ساعات و 50 دقيقة)
           timeout 21000 python bot.py || true
