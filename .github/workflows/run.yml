@@ -1,28 +1,46 @@
+
 name: Run AI Video Bot
+
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ai-video-bot
+  cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run Bot
+        run: python -m pip install -r requirements.txt
+
+      - name: Check required secrets
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
-          HF_API_KEY: ${{ secrets.HF_API_KEY }}
-          FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
+          MAGIC_HOUR_API_KEY: ${{ secrets.MAGIC_HOUR_API_KEY }}
         run: |
-          timeout 21000 python bot.py || true
+          python -c "import os,sys; missing=[k for k in ('TELEGRAM_BOT_TOKEN','MAGIC_HOUR_API_KEY') if not os.getenv(k,'').strip()]; print('Missing required secrets: '+', '.join(missing) if missing else 'Required secrets are configured'); sys.exit(1 if missing else 0)"
+
+      - name: Run Telegram bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          MAGIC_HOUR_API_KEY: ${{ secrets.MAGIC_HOUR_API_KEY }}
+        run: timeout 21000 python -u bot.py
