@@ -36,11 +36,13 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           MAGIC_HOUR_API_KEY: ${{ secrets.MAGIC_HOUR_API_KEY }}
+          BOT_OWNER_ID: ${{ secrets.BOT_OWNER_ID }}
         run: |
-          python -c "import os,sys; missing=[k for k in ('TELEGRAM_BOT_TOKEN','MAGIC_HOUR_API_KEY') if not os.getenv(k,'').strip()]; print('Missing required secrets: '+', '.join(missing) if missing else 'Required secrets are configured'); sys.exit(1 if missing else 0)"
+          python -c "import os,sys; missing=[k for k in ('TELEGRAM_BOT_TOKEN','MAGIC_HOUR_API_KEY','BOT_OWNER_ID') if not os.getenv(k,'').strip()]; print('Missing required secrets: '+', '.join(missing) if missing else 'Required secrets are configured'); sys.exit(1 if missing else 0)"
 
       - name: Run Telegram bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           MAGIC_HOUR_API_KEY: ${{ secrets.MAGIC_HOUR_API_KEY }}
+          BOT_OWNER_ID: ${{ secrets.BOT_OWNER_ID }}
         run: timeout 21000 python -u bot.py
