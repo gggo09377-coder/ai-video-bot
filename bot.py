@@ -89,6 +89,7 @@ async def process_job(context, job_id, prompt, image_bytes, update):
             await update.message.reply_text("📤 جاري رفع الصورة...")
             image_url = await apis.upload_image(image_bytes)
 
+        # هنا يتم استدعاء المحرك الجديد
         video_url, provider, error = await apis.generate_video_with_fallback(prompt, image_url)
 
         if video_url:
@@ -97,7 +98,7 @@ async def process_job(context, job_id, prompt, image_bytes, update):
             await update.message.reply_video(video_url, caption=f"✅ تم التوليد عبر {provider}")
         else:
             st.update_job(job_id, status="error", error=error)
-            await update.message.reply_text("❌ فشل التوليد. جرب تغيير الوصف.")
+            await update.message.reply_text(f"❌ فشل التوليد: {error}")
     except Exception as e:
         log.error(f"Job failed: {e}")
         await update.message.reply_text(f"❌ خطأ تقني: {str(e)[:50]}")
